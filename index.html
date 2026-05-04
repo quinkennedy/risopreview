@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Riso Print Preview</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Riso Print Preview</h1>
+    <p id="icc-description" class="icc-meta"></p>
+  </header>
+
+  <main>
+    <section class="channels">
+
+      <div class="channel" id="channel-teal" style="--ink-color: #00ACAE">
+        <div class="channel-header">
+          <span class="ink-swatch"></span>
+          <h2>Light Teal</h2>
+        </div>
+        <div class="upload-area" id="upload-area-teal">
+          <input type="file" id="upload-teal" accept="image/*" hidden>
+          <div class="upload-prompt">
+            <span class="upload-icon">+</span>
+            <span>Click or drop image</span>
+          </div>
+          <canvas id="thumb-teal" hidden></canvas>
+        </div>
+        <div class="channel-controls">
+          <label class="toggle">
+            <input type="checkbox" id="invert-teal">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label">Invert</span>
+          </label>
+          <div class="slider-row">
+            <span class="slider-label">Brightness</span>
+            <input type="range" id="brightness-teal" min="-128" max="128" value="0" step="1">
+            <span class="slider-val" id="brightness-val-teal">0</span>
+          </div>
+          <div class="slider-row">
+            <span class="slider-label">Contrast</span>
+            <input type="range" id="contrast-teal" min="-100" max="100" value="0" step="1">
+            <span class="slider-val" id="contrast-val-teal">0</span>
+          </div>
+          <p class="warning" id="warn-teal" hidden>Not grayscale — using luminance conversion.</p>
+        </div>
+      </div>
+
+      <div class="channel" id="channel-pink" style="--ink-color: #FF48B0">
+        <div class="channel-header">
+          <span class="ink-swatch"></span>
+          <h2>Fluorescent Pink</h2>
+        </div>
+        <div class="upload-area" id="upload-area-pink">
+          <input type="file" id="upload-pink" accept="image/*" hidden>
+          <div class="upload-prompt">
+            <span class="upload-icon">+</span>
+            <span>Click or drop image</span>
+          </div>
+          <canvas id="thumb-pink" hidden></canvas>
+        </div>
+        <div class="channel-controls">
+          <label class="toggle">
+            <input type="checkbox" id="invert-pink">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            <span class="toggle-label">Invert</span>
+          </label>
+          <div class="slider-row">
+            <span class="slider-label">Brightness</span>
+            <input type="range" id="brightness-pink" min="-128" max="128" value="0" step="1">
+            <span class="slider-val" id="brightness-val-pink">0</span>
+          </div>
+          <div class="slider-row">
+            <span class="slider-label">Contrast</span>
+            <input type="range" id="contrast-pink" min="-100" max="100" value="0" step="1">
+            <span class="slider-val" id="contrast-val-pink">0</span>
+          </div>
+          <p class="warning" id="warn-pink" hidden>Not grayscale — using luminance conversion.</p>
+        </div>
+      </div>
+
+    </section>
+
+    <div class="intent-bar">
+      <span class="intent-label">Render intent</span>
+      <label class="intent-option">
+        <input type="radio" name="render-intent" id="intent-perceptual" value="perceptual" checked>
+        <span>Perceptual</span>
+      </label>
+      <label class="intent-option">
+        <input type="radio" name="render-intent" id="intent-relative" value="relative">
+        <span>Relative Colorimetric</span>
+      </label>
+      <span class="intent-note">(both with black point compensation)</span>
+    </div>
+
+    <section class="previews">
+
+      <div class="preview-row" id="row-raw">
+        <div class="row-header">
+          <span class="row-label">Raw</span>
+          <button class="row-toggle" aria-expanded="true" aria-controls="row-raw-body">
+            <span class="toggle-chevron"></span>
+          </button>
+        </div>
+        <div class="row-body" id="row-raw-body">
+          <div class="preview-figures">
+            <figure id="fig-raw-teal">
+              <canvas id="canvas-raw-teal"></canvas>
+              <figcaption>Light Teal</figcaption>
+            </figure>
+            <figure id="fig-raw-pink">
+              <canvas id="canvas-raw-pink"></canvas>
+              <figcaption>Fluorescent Pink</figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+
+      <div class="preview-row" id="row-grayscale">
+        <div class="row-header">
+          <span class="row-label">Grayscale</span>
+          <button class="row-toggle" aria-expanded="true" aria-controls="row-grayscale-body">
+            <span class="toggle-chevron"></span>
+          </button>
+        </div>
+        <div class="row-body" id="row-grayscale-body">
+          <div class="preview-figures">
+            <figure id="fig-gray-teal">
+              <canvas id="canvas-gray-teal"></canvas>
+              <figcaption>Light Teal</figcaption>
+            </figure>
+            <figure id="fig-gray-pink">
+              <canvas id="canvas-gray-pink"></canvas>
+              <figcaption>Fluorescent Pink</figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+
+      <div class="preview-row" id="row-colored">
+        <div class="row-header">
+          <span class="row-label">Ink Color</span>
+          <button class="row-toggle" aria-expanded="true" aria-controls="row-colored-body">
+            <span class="toggle-chevron"></span>
+          </button>
+        </div>
+        <div class="row-body" id="row-colored-body">
+          <div class="preview-figures">
+            <figure id="fig-color-teal">
+              <canvas id="canvas-color-teal"></canvas>
+              <figcaption>Light Teal</figcaption>
+            </figure>
+            <figure id="fig-color-pink">
+              <canvas id="canvas-color-pink"></canvas>
+              <figcaption>Fluorescent Pink</figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+
+      <div class="preview-row" id="row-composite">
+        <div class="row-header">
+          <span class="row-label">Composite</span>
+          <button class="row-toggle" aria-expanded="true" aria-controls="row-composite-body">
+            <span class="toggle-chevron"></span>
+          </button>
+        </div>
+        <div class="row-body" id="row-composite-body">
+          <div class="preview-figures">
+            <figure id="fig-composite">
+              <canvas id="canvas-composite"></canvas>
+              <figcaption>Combined</figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <footer>
+    <p id="icc-footer" class="icc-meta"></p>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
