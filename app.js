@@ -34,7 +34,7 @@ function makeBuffer(arrayBuffer) {
 const state = {
   teal: { imageData: null, rawData: null, width: 0, height: 0, inverted: false, brightness: 0, contrast: 0, isDefault: true },
   pink: { imageData: null, rawData: null, width: 0, height: 0, inverted: false, brightness: 0, contrast: 0, isDefault: true },
-  renderIntent: INTENT_PERCEPTUAL,
+  renderIntent: INTENT_RELATIVE_COLORIMETRIC,
 };
 
 let lcms = null;
@@ -95,13 +95,10 @@ async function initLCMS() {
   const ab = await resp.arrayBuffer();
   const buf = new Uint8Array(ab);
 
-  const printer = lcms.cmsOpenProfileFromMem(buf, buf.byteLength);
-  const srgb    = lcms.cmsCreate_sRGBProfile();
+  profilePrinter = lcms.cmsOpenProfileFromMem(buf, buf.byteLength);
+  profileSRGB    = lcms.cmsCreate_sRGBProfile();
 
-  buildTransforms(printer, srgb);
-
-  lcms.cmsCloseProfile(printer);
-  lcms.cmsCloseProfile(srgb);
+  buildTransforms(profilePrinter, profileSRGB);
 
   // Display ICC metadata via icc.mjs
   try {
@@ -133,17 +130,9 @@ function buildTransforms(printer, srgb) {
   xformComposite = lcms.cmsCreateProofingTransform(srgb, TYPE_RGB_8, srgb, TYPE_RGB_8, printer, intent, INTENT_RELATIVE_COLORIMETRIC, flags);
 }
 
-async function rebuildTransforms() {
-  if (!lcms) return;
-  const resp = await fetch(`./${ICC_FILE}`);
-  if (!resp.ok) return;
-  const ab = await resp.arrayBuffer();
-  const buf = new Uint8Array(ab);
-  const printer = lcms.cmsOpenProfileFromMem(buf, buf.byteLength);
-  const srgb    = lcms.cmsCreate_sRGBProfile();
-  buildTransforms(printer, srgb);
-  lcms.cmsCloseProfile(printer);
-  lcms.cmsCloseProfile(srgb);
+function rebuildTransforms() {
+  if (!lcms || !profilePrinter || !profileSRGB) return;
+  buildTransforms(profilePrinter, profileSRGB);
   scheduleRender();
 }
 
@@ -435,13 +424,13 @@ function bindEvents() {
   }
 
   // Render intent toggle
-  document.getElementById('intent-perceptual').addEventListener('change', async () => {
+  document.getElementById('intent-perceptual').addEventListener('change', () => {
     state.renderIntent = INTENT_PERCEPTUAL;
-    await rebuildTransforms();
+    rebuildTransforms();
   });
-  document.getElementById('intent-relative').addEventListener('change', async () => {
+  document.getElementById('intent-relative').addEventListener('change', () => {
     state.renderIntent = INTENT_RELATIVE_COLORIMETRIC;
-    await rebuildTransforms();
+    rebuildTransforms();
   });
 
   // Preview row collapse toggles
