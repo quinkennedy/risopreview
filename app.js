@@ -45,10 +45,22 @@ let xformPink = null;
 let xformComposite = null;
 
 async function init() {
+  for (const key of ['teal', 'pink']) resetChannelControls(key);
   initDefaultImages();
   await initLCMS();
   bindEvents();
   updateVisibility();
+}
+
+function resetChannelControls(key) {
+  state[key].inverted   = false;
+  state[key].brightness = 0;
+  state[key].contrast   = 0;
+  document.getElementById(`invert-${key}`).checked              = false;
+  document.getElementById(`brightness-${key}`).value            = 0;
+  document.getElementById(`brightness-val-${key}`).textContent  = '0';
+  document.getElementById(`contrast-${key}`).value              = 0;
+  document.getElementById(`contrast-val-${key}`).textContent    = '0';
 }
 
 function makeWhiteImageData(w, h) {
@@ -156,6 +168,7 @@ function processImage(rawImageData, key) {
     lumas[i] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
   }
 
+  resetChannelControls(key);
   state[key].imageData = lumas;
   state[key].rawData = new Uint8ClampedArray(data.buffer.slice(0, pixelCount * 4));
   state[key].width = width;
