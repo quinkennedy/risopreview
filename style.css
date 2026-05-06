@@ -10,6 +10,7 @@
   --border: #383838;
   --text: #e8e8e8;
   --text-dim: #888;
+  --text-dark: #444;
   --warning: #e8a000;
   --radius: 6px;
   --gap: 1.5rem;
@@ -383,6 +384,42 @@ figure canvas {
 /* Composite figure takes full width */
 #fig-composite {
   flex: 1 1 600px;
+}
+
+/* ── Registration controls ── */
+
+.reg-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.btn-randomize {
+  background: var(--border);
+  color: var(--text);
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.2rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.btn-randomize:hover {
+  background: var(--text-dim);
+  color: var(--bg);
+}
+
+.reg-im {
+  font-size: 0.9rem;
+  color: var(--text-dark);
+  transition: color 0.2s;
+}
+
+.reg-toggle:has(input:not(:checked)) .reg-im {
+  color: var(--text-dim);
 }
 
 footer {

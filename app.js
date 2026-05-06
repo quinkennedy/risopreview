@@ -35,6 +35,7 @@ const state = {
   teal: { imageData: null, rawData: null, width: 0, height: 0, inverted: false, brightness: 0, contrast: 0, isDefault: true },
   pink: { imageData: null, rawData: null, width: 0, height: 0, inverted: false, brightness: 0, contrast: 0, isDefault: true },
   renderIntent: INTENT_RELATIVE_COLORIMETRIC,
+  misregistration: { perfect: true, dx: 0, dy: 0, angle: 0 },
 };
 
 let lcms = null;
@@ -219,11 +220,37 @@ function buildSingleBuffer(key) {
   return buf;
 }
 
+// Bilinear sample of the pink channel at a (possibly fractional) pixel position.
+// Returns 255 (no ink) for out-of-bounds coordinates.
+function samplePinkDensity(px, py) {
+  const { imageData, width, height, inverted, brightness, contrast } = state.pink;
+  const getPinkAt = (xi, yi) => {
+    if (xi < 0 || yi < 0 || xi >= width || yi >= height) return 255;
+    return getDensity(imageData[yi * width + xi], inverted, brightness, contrast);
+  };
+  const x0 = Math.floor(px);
+  const y0 = Math.floor(py);
+  const fx = px - x0;
+  const fy = py - y0;
+  return Math.round(
+    getPinkAt(x0,     y0)     * (1 - fx) * (1 - fy) +
+    getPinkAt(x0 + 1, y0)     *      fx  * (1 - fy) +
+    getPinkAt(x0,     y0 + 1) * (1 - fx) *      fy  +
+    getPinkAt(x0 + 1, y0 + 1) *      fx  *      fy
+  );
+}
+
 function buildCompositeBuffer(w, h) {
   const count = w * h;
   const buf = new Uint8Array(count * 3);
   const teal = state.teal;
   const pink = state.pink;
+  const { perfect, dx, dy, angle } = state.misregistration;
+
+  const cosA = perfect ? 1 : Math.cos(-angle * Math.PI / 180);
+  const sinA = perfect ? 0 : Math.sin(-angle * Math.PI / 180);
+  const cx = w / 2;
+  const cy = h / 2;
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -234,9 +261,18 @@ function buildCompositeBuffer(w, h) {
         tealDensity = getDensity(teal.imageData[y * teal.width + x], teal.inverted, teal.brightness, teal.contrast);
       }
 
-      let pinkDensity = 255;
-      if (x < pink.width && y < pink.height) {
-        pinkDensity = getDensity(pink.imageData[y * pink.width + x], pink.inverted, pink.brightness, pink.contrast);
+      let pinkDensity;
+      if (perfect) {
+        pinkDensity = (x < pink.width && y < pink.height)
+          ? getDensity(pink.imageData[y * pink.width + x], pink.inverted, pink.brightness, pink.contrast)
+          : 255;
+      } else {
+        // Inverse of pink's (translate then rotate) transform: un-translate, then un-rotate
+        const tx = x - dx;
+        const ty = y - dy;
+        const px = cosA * (tx - cx) - sinA * (ty - cy) + cx;
+        const py = sinA * (tx - cx) + cosA * (ty - cy) + cy;
+        pinkDensity = samplePinkDensity(px, py);
       }
 
       buf[outIdx]     = tealDensity;
@@ -245,6 +281,16 @@ function buildCompositeBuffer(w, h) {
     }
   }
   return buf;
+}
+
+const MISREG_MAX_PX = 12; // ~1mm at 300 DPI
+const MISREG_MAX_DEG = 0.25;
+
+function randomizeMisregistration() {
+  state.misregistration.dx    = (Math.random() * 2 - 1) * MISREG_MAX_PX;
+  state.misregistration.dy    = (Math.random() * 2 - 1) * MISREG_MAX_PX;
+  state.misregistration.angle = (Math.random() * 2 - 1) * MISREG_MAX_DEG;
+  scheduleRender();
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
@@ -445,6 +491,21 @@ function bindEvents() {
     state.renderIntent = INTENT_RELATIVE_COLORIMETRIC;
     rebuildTransforms();
   });
+
+  // Registration toggle
+  document.getElementById('reg-perfect').addEventListener('change', (e) => {
+    state.misregistration.perfect = e.target.checked;
+    document.getElementById('btn-randomize').hidden = e.target.checked;
+    if (e.target.checked) {
+      state.misregistration.dx = 0;
+      state.misregistration.dy = 0;
+      state.misregistration.angle = 0;
+      scheduleRender();
+    } else {
+      randomizeMisregistration();
+    }
+  });
+  document.getElementById('btn-randomize').addEventListener('click', randomizeMisregistration);
 
   // Preview row collapse toggles
   for (const rowId of ['row-raw', 'row-grayscale', 'row-colored', 'row-composite']) {
