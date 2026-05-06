@@ -386,6 +386,26 @@ figure canvas {
   flex: 1 1 600px;
 }
 
+/* ── Composite progress bar ── */
+
+.composite-progress-wrap {
+  flex: 1;
+  margin: 0 0.75rem;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  align-self: center;
+}
+
+.composite-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--text-dim);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+
 /* ── Registration controls ── */
 
 .reg-controls {

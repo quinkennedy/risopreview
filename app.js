@@ -240,7 +240,9 @@ function samplePinkDensity(px, py) {
   );
 }
 
-function buildCompositeBuffer(w, h) {
+// Yields back to the browser roughly every 16ms so the UI can update.
+// Returns null if a newer render has been scheduled (this one is stale).
+async function buildCompositeBufferAsync(w, h, version, onProgress) {
   const count = w * h;
   const buf = new Uint8Array(count * 3);
   const teal = state.teal;
@@ -251,6 +253,9 @@ function buildCompositeBuffer(w, h) {
   const sinA = perfect ? 0 : Math.sin(-angle * Math.PI / 180);
   const cx = w / 2;
   const cy = h / 2;
+
+  const YIELD_MS = 16;
+  let lastYield = performance.now();
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -267,7 +272,6 @@ function buildCompositeBuffer(w, h) {
           ? getDensity(pink.imageData[y * pink.width + x], pink.inverted, pink.brightness, pink.contrast)
           : 255;
       } else {
-        // Inverse of pink's (translate then rotate) transform: un-translate, then un-rotate
         const tx = x - dx;
         const ty = y - dy;
         const px = cosA * (tx - cx) - sinA * (ty - cy) + cx;
@@ -279,7 +283,17 @@ function buildCompositeBuffer(w, h) {
       buf[outIdx + 1] = pinkDensity;
       buf[outIdx + 2] = 0;
     }
+
+    // Yield roughly once per frame so the browser can repaint progress
+    const now = performance.now();
+    if (now - lastYield >= YIELD_MS) {
+      onProgress(y / h);
+      await new Promise(r => setTimeout(r, 0));
+      if (renderVersion !== version) return null;
+      lastYield = performance.now();
+    }
   }
+
   return buf;
 }
 
@@ -345,13 +359,29 @@ function renderColored(key, xform) {
   ctx.putImageData(imgData, 0, 0);
 }
 
-function renderComposite() {
+async function renderComposite(progressShownRef) {
   if (!lcms || !xformComposite) return;
+  const version = renderVersion;
   const w = Math.max(state.teal.width, state.pink.width);
   const h = Math.max(state.teal.height, state.pink.height);
   const count = w * h;
-  const inputBuf = buildCompositeBuffer(w, h);
+
+  const progressWrap = document.getElementById('composite-progress-wrap');
+  const progressBar  = document.getElementById('composite-progress-bar');
+
+  const onProgress = (p) => {
+    if (progressShownRef.shown) progressBar.style.width = `${Math.round(p * 100)}%`;
+  };
+
+  const inputBuf = await buildCompositeBufferAsync(w, h, version, onProgress);
+
+  if (!inputBuf || renderVersion !== version) {
+    return;
+  }
+
   const out = lcms.cmsDoTransform(xformComposite, inputBuf, count);
+  progressWrap.hidden = true;
+
   const canvas = setCanvasSize('canvas-composite', w, h);
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(w, h);
@@ -365,23 +395,41 @@ function renderComposite() {
   ctx.putImageData(imgData, 0, 0);
 }
 
-function renderAll() {
+async function renderAll() {
+  const version = renderVersion;
+  const progressWrap = document.getElementById('composite-progress-wrap');
+  const progressBar  = document.getElementById('composite-progress-bar');
+  const progressShownRef = { shown: false };
+
+  const showTimer = setTimeout(() => {
+    if (renderVersion === version) {
+      progressShownRef.shown = true;
+      progressBar.style.width = '0%';
+      progressWrap.hidden = false;
+    }
+  }, 500);
+
   for (const key of ['teal', 'pink']) {
     renderRaw(key);
     renderGrayscale(key);
     renderColored(key, key === 'teal' ? xformTeal : xformPink);
   }
-  renderComposite();
+  await renderComposite(progressShownRef);
+  clearTimeout(showTimer);
+  if (progressShownRef.shown) progressWrap.hidden = true;
   updateVisibility();
 }
 
 let renderPending = false;
+let renderVersion = 0;
+
 function scheduleRender() {
+  renderVersion++;
   if (!renderPending) {
     renderPending = true;
     requestAnimationFrame(() => {
-      renderAll();
       renderPending = false;
+      renderAll().catch(console.error);
     });
   }
 }
