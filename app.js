@@ -37,6 +37,7 @@ const state = {
   renderIntent: INTENT_RELATIVE_COLORIMETRIC,
   misregistration: { perfect: true, dx: 0, dy: 0, angle: 0 },
   previewMode: 'csv',
+  screenType: 'grain-touch',
   dpiDetected: { teal: 0, pink: 0 },
   dpiManual: 300,
   dpiOverride: false,
@@ -52,10 +53,12 @@ let xformTeal = null;
 let xformPink = null;
 let xformComposite = null;
 let csvLut = null;
+let screenCoveredDensityCurve = null;
 
 async function init() {
   for (const key of ['teal', 'pink']) resetChannelControls(key);
   document.getElementById('method-csv').checked       = true;
+  document.getElementById('screen-grain').checked     = true;
   document.getElementById('intent-relative').checked  = true;
   document.getElementById('reg-perfect').checked      = true;
   document.getElementById('btn-randomize').hidden     = true;
@@ -188,6 +191,27 @@ async function buildCsvLut() {
     }
   }
   csvLut = lut;
+  screenCoveredDensityCurve = buildScreenCoveredDensityCurve(lut);
+}
+
+// Models screen-covered as a density shift applied before LUT lookup, so full-ink and
+// no-ink are always unchanged and only the midtones darken.
+// Shape: d' = d - A * sin(pi * d/255), amplitude A calibrated from one reference measurement
+// (digital #76, grain-touch 5B8C94, screen-covered 51808A) using the LUT's own gradient.
+function buildScreenCoveredDensityCurve(lut) {
+  const REF_D = 0x76;
+  const REF_SCREEN_LUMA = 0.2126 * 0x51 + 0.7152 * 0x80 + 0.0722 * 0x8A;
+  const luma = (base) => 0.2126 * lut[base] + 0.7152 * lut[base + 1] + 0.0722 * lut[base + 2];
+  const idx = (tD) => (tD * 256 + 255) * 3;
+  const grainLuma = luma(idx(REF_D));
+  // Central-difference: lower density value = more ink = darker, so REF_D+2 is lighter than REF_D-2
+  const dLumaDDensity = (luma(idx(REF_D + 2)) - luma(idx(REF_D - 2))) / 4;
+  const A = (grainLuma - REF_SCREEN_LUMA) / (dLumaDDensity * Math.sin(Math.PI * REF_D / 255));
+  const curve = new Uint8Array(256);
+  for (let d = 0; d < 256; d++) {
+    curve[d] = Math.max(0, Math.min(255, Math.round(d - A * Math.sin(Math.PI * d / 255))));
+  }
+  return curve;
 }
 
 function buildTransforms(printer, srgb) {
@@ -429,11 +453,12 @@ function renderColored(key, xform) {
   const imgData = ctx.createImageData(ch.width, ch.height);
 
   if (state.previewMode === 'csv' && csvLut) {
+    const dc = state.screenType === 'screen-covered' ? screenCoveredDensityCurve : null;
     const isTeal = key === 'teal';
     for (let i = 0; i < count; i++) {
       const d = getDensity(ch.imageData[i], ch.inverted, ch.brightness, ch.contrast);
-      const tD = isTeal ? d : 255;
-      const pD = isTeal ? 255 : d;
+      const tD = dc ? dc[isTeal ? d : 255] : (isTeal ? d : 255);
+      const pD = dc ? dc[isTeal ? 255 : d] : (isTeal ? 255 : d);
       const base = (tD * 256 + pD) * 3;
       imgData.data[i * 4]     = csvLut[base];
       imgData.data[i * 4 + 1] = csvLut[base + 1];
@@ -483,9 +508,10 @@ async function renderComposite(progressShownRef) {
   const imgData = ctx.createImageData(w, h);
 
   if (state.previewMode === 'csv' && csvLut) {
+    const dc = state.screenType === 'screen-covered' ? screenCoveredDensityCurve : null;
     for (let i = 0; i < count; i++) {
-      const tD = inputBuf[i * 3];
-      const pD = inputBuf[i * 3 + 1];
+      const tD = dc ? dc[inputBuf[i * 3]]     : inputBuf[i * 3];
+      const pD = dc ? dc[inputBuf[i * 3 + 1]] : inputBuf[i * 3 + 1];
       const base = (tD * 256 + pD) * 3;
       imgData.data[i * 4]     = csvLut[base];
       imgData.data[i * 4 + 1] = csvLut[base + 1];
@@ -999,6 +1025,16 @@ function bindEvents() {
       if (!e.target.checked) return;
       state.previewMode = e.target.value;
       document.getElementById('intent-bar').classList.toggle('disabled', state.previewMode === 'csv');
+      document.getElementById('screen-type-bar').hidden = state.previewMode !== 'csv';
+      scheduleRender();
+    });
+  }
+
+  // Screen type toggle (grain-touch vs screen-covered)
+  for (const id of ['screen-grain', 'screen-covered']) {
+    document.getElementById(id).addEventListener('change', (e) => {
+      if (!e.target.checked) return;
+      state.screenType = e.target.value;
       scheduleRender();
     });
   }
