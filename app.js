@@ -62,11 +62,16 @@ async function init() {
   document.getElementById('intent-relative').checked  = true;
   document.getElementById('reg-perfect').checked      = true;
   document.getElementById('btn-randomize').hidden     = true;
+  document.getElementById('dpi-override').checked     = false;
+  document.getElementById('dpi-manual').value         = String(state.dpiManual);
+  document.getElementById('dpi-manual').disabled      = true;
+  document.getElementById('actual-size-mode').checked = false;
   const saved = parseFloat(localStorage.getItem('risoCalibrationFactor'));
   if (!isNaN(saved) && saved >= 0.25 && saved <= 4) state.calibrationFactor = saved;
   initDefaultImages();
   await Promise.all([initLCMS(), buildCsvLut()]);
   bindEvents();
+  new ResizeObserver(syncRulerVHeight).observe(document.getElementById('canvas-composite'));
   updateVisibility();
   updateEffectiveDpi();
 }
@@ -670,6 +675,7 @@ function updateEffectiveDpi() {
     const label = state.dpiOverride ? 'manual' : (det > 0 ? 'from file' : 'default');
     readout.textContent = `${dpi} DPI (${label})`;
   }
+  applyActualSizeScaling();
   drawRulers();
   runPrintWarnings();
 }
@@ -771,6 +777,15 @@ function drawRulerCanvas(canvas, w, h, dpi, orientation) {
       drawTick(p, tick, '#555', lbl, 'bottom');
     }
   }
+}
+
+function syncRulerVHeight() {
+  if (state.actualSizeMode) return;
+  const composite = document.getElementById('canvas-composite');
+  const rulerV    = document.getElementById('canvas-ruler-v');
+  if (!composite || !rulerV) return;
+  const h = composite.getBoundingClientRect().height;
+  if (h > 0) rulerV.style.height = `${h}px`;
 }
 
 function applyActualSizeScaling() {

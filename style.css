@@ -528,6 +528,15 @@ figure canvas {
   cursor: default;
 }
 
+#actual-size-mode:checked ~ .toggle-track {
+  background: #4a9eff;
+}
+
+#actual-size-mode:checked ~ .toggle-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .btn-calibrate {
   background: var(--border);
   color: var(--text);
