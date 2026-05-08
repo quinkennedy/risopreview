@@ -85,16 +85,27 @@
     </section>
 
     <div class="intent-bar">
-      <span class="intent-label">Render intent</span>
+      <span class="intent-label">Preview method</span>
       <label class="intent-option">
-        <input type="radio" name="render-intent" id="intent-perceptual" value="perceptual">
-        <span>Perceptual</span>
+        <input type="radio" name="preview-method" id="method-icc" value="icc">
+        <span>ICC Profile</span>
       </label>
       <label class="intent-option">
-        <input type="radio" name="render-intent" id="intent-relative" value="relative" checked>
-        <span>Relative Colorimetric</span>
+        <input type="radio" name="preview-method" id="method-csv" value="csv" checked>
+        <span>Scan Data</span>
       </label>
-      <span class="intent-note">(both with black point compensation)</span>
+      <div class="intent-section disabled" id="intent-bar">
+        <span class="intent-label">Render intent</span>
+        <label class="intent-option">
+          <input type="radio" name="render-intent" id="intent-perceptual" value="perceptual">
+          <span>Perceptual</span>
+        </label>
+        <label class="intent-option">
+          <input type="radio" name="render-intent" id="intent-relative" value="relative" checked>
+          <span>Relative Colorimetric</span>
+        </label>
+        <span class="intent-note">(both with black point compensation)</span>
+      </div>
     </div>
 
     <section class="previews">

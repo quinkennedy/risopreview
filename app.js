@@ -36,6 +36,7 @@ const state = {
   pink: { imageData: null, rawData: null, width: 0, height: 0, inverted: false, brightness: 0, contrast: 0, isDefault: true },
   renderIntent: INTENT_RELATIVE_COLORIMETRIC,
   misregistration: { perfect: true, dx: 0, dy: 0, angle: 0 },
+  previewMode: 'csv',
 };
 
 let lcms = null;
@@ -44,11 +45,16 @@ let profileSRGB = null;
 let xformTeal = null;
 let xformPink = null;
 let xformComposite = null;
+let csvLut = null;
 
 async function init() {
   for (const key of ['teal', 'pink']) resetChannelControls(key);
+  document.getElementById('method-csv').checked       = true;
+  document.getElementById('intent-relative').checked  = true;
+  document.getElementById('reg-perfect').checked      = true;
+  document.getElementById('btn-randomize').hidden     = true;
   initDefaultImages();
-  await initLCMS();
+  await Promise.all([initLCMS(), buildCsvLut()]);
   bindEvents();
   updateVisibility();
 }
@@ -129,6 +135,50 @@ async function initLCMS() {
 
   // Re-render if images were uploaded before lcms was ready
   scheduleRender();
+}
+
+async function buildCsvLut() {
+  const resp = await fetch('./results.csv');
+  if (!resp.ok) throw new Error(`Failed to fetch CSV: ${resp.status}`);
+  const lines = (await resp.text()).trim().split('\n');
+
+  const accumMap = new Map();
+  for (let i = 1; i < lines.length; i++) {
+    const [pHex, tHex, sHex] = lines[i].split(',').map(s => s.trim());
+    const p = parseInt(pHex.slice(2, 4), 16);
+    const t = parseInt(tHex.slice(2, 4), 16);
+    const r = parseInt(sHex.slice(2, 4), 16);
+    const g = parseInt(sHex.slice(4, 6), 16);
+    const b = parseInt(sHex.slice(6, 8), 16);
+    const key = p * 256 + t;
+    if (!accumMap.has(key)) accumMap.set(key, { r: 0, g: 0, b: 0, count: 0 });
+    const acc = accumMap.get(key);
+    acc.r += r; acc.g += g; acc.b += b; acc.count++;
+  }
+
+  const pts = [];
+  for (const [key, acc] of accumMap) {
+    pts.push({ p: key >> 8, t: key & 0xFF,
+               r: acc.r / acc.count, g: acc.g / acc.count, b: acc.b / acc.count });
+  }
+
+  const EPS = 1e-6;
+  const lut = new Uint8Array(256 * 256 * 3);
+  for (let tIdx = 0; tIdx < 256; tIdx++) {
+    for (let pIdx = 0; pIdx < 256; pIdx++) {
+      let wR = 0, wG = 0, wB = 0, wSum = 0;
+      for (const pt of pts) {
+        const dp = pIdx - pt.p, dt = tIdx - pt.t;
+        const w = 1 / (dp * dp + dt * dt + EPS);
+        wR += w * pt.r; wG += w * pt.g; wB += w * pt.b; wSum += w;
+      }
+      const base = (tIdx * 256 + pIdx) * 3;
+      lut[base]     = Math.round(wR / wSum);
+      lut[base + 1] = Math.round(wG / wSum);
+      lut[base + 2] = Math.round(wB / wSum);
+    }
+  }
+  csvLut = lut;
 }
 
 function buildTransforms(printer, srgb) {
@@ -341,26 +391,39 @@ function renderGrayscale(key) {
 }
 
 function renderColored(key, xform) {
-  if (!lcms || !xform) return;
   const ch = state[key];
   const count = ch.width * ch.height;
-  const inputBuf = buildSingleBuffer(key);
-  const out = lcms.cmsDoTransform(xform, inputBuf, count);
   const canvas = setCanvasSize(`canvas-color-${key}`, ch.width, ch.height);
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(ch.width, ch.height);
 
-  for (let i = 0; i < count; i++) {
-    imgData.data[i * 4]     = out[i * 3];
-    imgData.data[i * 4 + 1] = out[i * 3 + 1];
-    imgData.data[i * 4 + 2] = out[i * 3 + 2];
-    imgData.data[i * 4 + 3] = 255;
+  if (state.previewMode === 'csv' && csvLut) {
+    const isTeal = key === 'teal';
+    for (let i = 0; i < count; i++) {
+      const d = getDensity(ch.imageData[i], ch.inverted, ch.brightness, ch.contrast);
+      const tD = isTeal ? d : 255;
+      const pD = isTeal ? 255 : d;
+      const base = (tD * 256 + pD) * 3;
+      imgData.data[i * 4]     = csvLut[base];
+      imgData.data[i * 4 + 1] = csvLut[base + 1];
+      imgData.data[i * 4 + 2] = csvLut[base + 2];
+      imgData.data[i * 4 + 3] = 255;
+    }
+  } else {
+    if (!lcms || !xform) return;
+    const inputBuf = buildSingleBuffer(key);
+    const out = lcms.cmsDoTransform(xform, inputBuf, count);
+    for (let i = 0; i < count; i++) {
+      imgData.data[i * 4]     = out[i * 3];
+      imgData.data[i * 4 + 1] = out[i * 3 + 1];
+      imgData.data[i * 4 + 2] = out[i * 3 + 2];
+      imgData.data[i * 4 + 3] = 255;
+    }
   }
   ctx.putImageData(imgData, 0, 0);
 }
 
 async function renderComposite(progressShownRef) {
-  if (!lcms || !xformComposite) return;
   const version = renderVersion;
   const w = Math.max(state.teal.width, state.pink.width);
   const h = Math.max(state.teal.height, state.pink.height);
@@ -370,27 +433,38 @@ async function renderComposite(progressShownRef) {
   const progressBar  = document.getElementById('composite-progress-bar');
 
   const onProgress = (p) => {
-    if (progressShownRef.shown) progressBar.style.width = `${Math.round(p * 100)}%`;
+    if (progressShownRef.shown) progressBar.style.width = `${Math.round(30 + p * 70)}%`;
   };
 
   const inputBuf = await buildCompositeBufferAsync(w, h, version, onProgress);
 
-  if (!inputBuf || renderVersion !== version) {
-    return;
-  }
+  if (!inputBuf || renderVersion !== version) return;
 
-  const out = lcms.cmsDoTransform(xformComposite, inputBuf, count);
   progressWrap.hidden = true;
 
   const canvas = setCanvasSize('canvas-composite', w, h);
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(w, h);
 
-  for (let i = 0; i < count; i++) {
-    imgData.data[i * 4]     = out[i * 3];
-    imgData.data[i * 4 + 1] = out[i * 3 + 1];
-    imgData.data[i * 4 + 2] = out[i * 3 + 2];
-    imgData.data[i * 4 + 3] = 255;
+  if (state.previewMode === 'csv' && csvLut) {
+    for (let i = 0; i < count; i++) {
+      const tD = inputBuf[i * 3];
+      const pD = inputBuf[i * 3 + 1];
+      const base = (tD * 256 + pD) * 3;
+      imgData.data[i * 4]     = csvLut[base];
+      imgData.data[i * 4 + 1] = csvLut[base + 1];
+      imgData.data[i * 4 + 2] = csvLut[base + 2];
+      imgData.data[i * 4 + 3] = 255;
+    }
+  } else {
+    if (!lcms || !xformComposite) return;
+    const out = lcms.cmsDoTransform(xformComposite, inputBuf, count);
+    for (let i = 0; i < count; i++) {
+      imgData.data[i * 4]     = out[i * 3];
+      imgData.data[i * 4 + 1] = out[i * 3 + 1];
+      imgData.data[i * 4 + 2] = out[i * 3 + 2];
+      imgData.data[i * 4 + 3] = 255;
+    }
   }
   ctx.putImageData(imgData, 0, 0);
 }
@@ -400,22 +474,41 @@ async function renderAll() {
   const progressWrap = document.getElementById('composite-progress-wrap');
   const progressBar  = document.getElementById('composite-progress-bar');
   const progressShownRef = { shown: false };
+  const startTime = performance.now();
+  let firstRenderMs = null;
 
-  const showTimer = setTimeout(() => {
-    if (renderVersion === version) {
+  function maybeShowProgress() {
+    if (progressShownRef.shown) return;
+    const elapsed = performance.now() - startTime;
+    if (firstRenderMs > 100 || elapsed > 500) {
       progressShownRef.shown = true;
-      progressBar.style.width = '0%';
       progressWrap.hidden = false;
     }
-  }, 500);
-
-  for (const key of ['teal', 'pink']) {
-    renderRaw(key);
-    renderGrayscale(key);
-    renderColored(key, key === 'teal' ? xformTeal : xformPink);
   }
+
+  const syncRenders = [
+    () => renderRaw('teal'),
+    () => renderGrayscale('teal'),
+    () => renderColored('teal', xformTeal),
+    () => renderRaw('pink'),
+    () => renderGrayscale('pink'),
+    () => renderColored('pink', xformPink),
+  ];
+
+  for (let i = 0; i < syncRenders.length; i++) {
+    const t0 = performance.now();
+    syncRenders[i]();
+    if (i === 0) firstRenderMs = performance.now() - t0;
+    maybeShowProgress();
+    if (progressShownRef.shown) progressBar.style.width = `${(i + 1) * 5}%`;
+    await new Promise(r => setTimeout(r, 0));
+    if (renderVersion !== version) {
+      if (progressShownRef.shown) progressWrap.hidden = true;
+      return;
+    }
+  }
+
   await renderComposite(progressShownRef);
-  clearTimeout(showTimer);
   if (progressShownRef.shown) progressWrap.hidden = true;
   updateVisibility();
 }
@@ -527,6 +620,16 @@ function bindEvents() {
       e.preventDefault();
       area.classList.remove('drag-over');
       handleUploadFile(e.dataTransfer.files[0], key);
+    });
+  }
+
+  // Preview method toggle
+  for (const id of ['method-icc', 'method-csv']) {
+    document.getElementById(id).addEventListener('change', (e) => {
+      if (!e.target.checked) return;
+      state.previewMode = e.target.value;
+      document.getElementById('intent-bar').classList.toggle('disabled', state.previewMode === 'csv');
+      scheduleRender();
     });
   }
 
