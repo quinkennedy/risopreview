@@ -195,6 +195,21 @@ main {
   color: var(--warning);
 }
 
+.tac-readout {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+
+.tac-readout.over-limit {
+  color: var(--warning);
+}
+
+.tac-readout.over-limit::before {
+  content: '⚠ ';
+}
+
 .slider-row {
   display: grid;
   grid-template-columns: 6rem 1fr 2.5rem;

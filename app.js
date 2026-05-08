@@ -234,6 +234,28 @@ function processImage(rawImageData, key) {
   scheduleRender();
 }
 
+// ── TAC computation ───────────────────────────────────────────────────────────
+
+function computeChannelTAC(key) {
+  const ch = state[key];
+  const count = ch.width * ch.height;
+  if (count === 0) return null;
+  let sum = 0;
+  for (let i = 0; i < count; i++) {
+    sum += 255 - getDensity(ch.imageData[i], ch.inverted, ch.brightness, ch.contrast);
+  }
+  return (sum / count / 255) * 100;
+}
+
+function computeCompositeTAC(buf, count) {
+  if (count === 0) return null;
+  let sum = 0;
+  for (let i = 0; i < count; i++) {
+    sum += (255 - buf[i * 3]) + (255 - buf[i * 3 + 1]);
+  }
+  return (sum / count / 255) * 100;
+}
+
 // ── Buffer construction ───────────────────────────────────────────────────────
 
 function getDensity(luma, inverted, brightness, contrast) {
@@ -442,6 +464,11 @@ async function renderComposite(progressShownRef) {
 
   progressWrap.hidden = true;
 
+  const tacVal = computeCompositeTAC(inputBuf, count);
+  const tacEl = document.getElementById('tac-composite');
+  tacEl.textContent = `TAC: ${tacVal !== null ? tacVal.toFixed(1) + '%' : '—'}`;
+  tacEl.classList.toggle('over-limit', tacVal !== null && tacVal > 125);
+
   const canvas = setCanvasSize('canvas-composite', w, h);
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(w, h);
@@ -506,6 +533,13 @@ async function renderAll() {
       if (progressShownRef.shown) progressWrap.hidden = true;
       return;
     }
+  }
+
+  for (const key of ['teal', 'pink']) {
+    const tac = computeChannelTAC(key);
+    const el = document.getElementById(`tac-${key}`);
+    el.textContent = `Coverage: ${tac !== null ? tac.toFixed(1) + '%' : '—'}`;
+    el.classList.toggle('over-limit', tac !== null && tac > 75);
   }
 
   await renderComposite(progressShownRef);
