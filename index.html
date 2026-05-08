@@ -112,10 +112,10 @@
 
     <section class="previews">
 
-      <div class="preview-row" id="row-raw">
+      <div class="preview-row collapsed" id="row-raw">
         <div class="row-header">
           <span class="row-label">Raw</span>
-          <button class="row-toggle" aria-expanded="true" aria-controls="row-raw-body">
+          <button class="row-toggle" aria-expanded="false" aria-controls="row-raw-body">
             <span class="toggle-chevron"></span>
           </button>
         </div>
@@ -133,10 +133,10 @@
         </div>
       </div>
 
-      <div class="preview-row" id="row-grayscale">
+      <div class="preview-row collapsed" id="row-grayscale">
         <div class="row-header">
           <span class="row-label">Grayscale</span>
-          <button class="row-toggle" aria-expanded="true" aria-controls="row-grayscale-body">
+          <button class="row-toggle" aria-expanded="false" aria-controls="row-grayscale-body">
             <span class="toggle-chevron"></span>
           </button>
         </div>
@@ -154,10 +154,10 @@
         </div>
       </div>
 
-      <div class="preview-row" id="row-colored">
+      <div class="preview-row collapsed" id="row-colored">
         <div class="row-header">
           <span class="row-label">Ink Color</span>
-          <button class="row-toggle" aria-expanded="true" aria-controls="row-colored-body">
+          <button class="row-toggle" aria-expanded="false" aria-controls="row-colored-body">
             <span class="toggle-chevron"></span>
           </button>
         </div>
@@ -195,9 +195,51 @@
             </label>
             <button class="btn-randomize" id="btn-randomize" hidden>Randomize</button>
           </div>
+          <div class="dpi-controls" id="dpi-controls">
+            <span class="dpi-label-text">Resolution:</span>
+            <span id="dpi-readout" class="dpi-readout">300 DPI (default)</span>
+            <label class="dpi-override-toggle">
+              <input type="checkbox" id="dpi-override">
+              Override:
+            </label>
+            <select id="dpi-manual" disabled>
+              <option value="100">100 DPI</option>
+              <option value="150">150 DPI</option>
+              <option value="300" selected>300 DPI</option>
+              <option value="600">600 DPI</option>
+              <option value="1200">1200 DPI</option>
+            </select>
+            <label class="toggle">
+              <input type="checkbox" id="actual-size-mode">
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              <span class="toggle-label">Actual size</span>
+            </label>
+            <button class="btn-calibrate" id="btn-calibrate">Calibrate screen</button>
+          </div>
+          <div class="calibration-widget" id="calibration-widget" hidden>
+            <p class="calibration-instruction">Drag until this bar is exactly <strong>5 cm</strong> on your physical ruler:</p>
+            <div class="calibration-bar-wrap">
+              <div class="calibration-bar" id="calibration-bar" style="width: 189px"></div>
+              <span class="calibration-bar-label">5 cm</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">Scale</span>
+              <input type="range" id="calibration-slider" min="0.5" max="2.0" value="1.0" step="0.01">
+              <span class="slider-val" id="calibration-val">100%</span>
+            </div>
+            <div class="calibration-actions">
+              <button id="btn-calibrate-confirm">Confirm</button>
+              <button id="btn-calibrate-cancel">Cancel</button>
+            </div>
+          </div>
           <div class="preview-figures">
             <figure id="fig-composite">
-              <canvas id="canvas-composite"></canvas>
+              <div class="ruler-layout" id="ruler-layout">
+                <div class="ruler-corner"></div>
+                <canvas id="canvas-ruler-h" class="ruler ruler-h" width="0" height="24"></canvas>
+                <canvas id="canvas-ruler-v" class="ruler ruler-v" width="24" height="0"></canvas>
+                <canvas id="canvas-composite"></canvas>
+              </div>
               <figcaption>Combined</figcaption>
               <p class="tac-readout" id="tac-composite" title="Total Area Coverage (TAC) — sum of ink coverage across both channels. Warning above 125%.">TAC: —</p>
             </figure>
@@ -206,6 +248,21 @@
       </div>
 
     </section>
+
+    <div class="preview-row" id="row-warnings">
+      <div class="row-header">
+        <span class="row-label">Print Warnings</span>
+        <button class="row-toggle" aria-expanded="true" aria-controls="row-warnings-body">
+          <span class="toggle-chevron"></span>
+        </button>
+      </div>
+      <div class="row-body" id="row-warnings-body">
+        <ul class="warnings-list" id="warnings-list">
+          <li class="warning-item warning-ok">No warnings</li>
+        </ul>
+      </div>
+    </div>
+
   </main>
 
   <footer>

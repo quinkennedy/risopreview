@@ -37,6 +37,12 @@ const state = {
   renderIntent: INTENT_RELATIVE_COLORIMETRIC,
   misregistration: { perfect: true, dx: 0, dy: 0, angle: 0 },
   previewMode: 'csv',
+  dpiDetected: { teal: 0, pink: 0 },
+  dpiManual: 300,
+  dpiOverride: false,
+  effectiveDpi: 300,
+  actualSizeMode: false,
+  calibrationFactor: 1.0,
 };
 
 let lcms = null;
@@ -53,10 +59,13 @@ async function init() {
   document.getElementById('intent-relative').checked  = true;
   document.getElementById('reg-perfect').checked      = true;
   document.getElementById('btn-randomize').hidden     = true;
+  const saved = parseFloat(localStorage.getItem('risoCalibrationFactor'));
+  if (!isNaN(saved) && saved >= 0.25 && saved <= 4) state.calibrationFactor = saved;
   initDefaultImages();
   await Promise.all([initLCMS(), buildCsvLut()]);
   bindEvents();
   updateVisibility();
+  updateEffectiveDpi();
 }
 
 function resetChannelControls(key) {
@@ -545,6 +554,9 @@ async function renderAll() {
   await renderComposite(progressShownRef);
   if (progressShownRef.shown) progressWrap.hidden = true;
   updateVisibility();
+  runPrintWarnings();
+  applyActualSizeScaling();
+  drawRulers();
 }
 
 let renderPending = false;
@@ -565,12 +577,329 @@ function scheduleRender() {
 
 function updateVisibility() {
   // All rows are always visible now (default white images are always present)
-  for (const id of ['row-raw', 'row-grayscale', 'row-colored', 'row-composite']) {
+  for (const id of ['row-raw', 'row-grayscale', 'row-colored', 'row-composite', 'row-warnings']) {
     document.getElementById(id).style.display = '';
   }
   for (const id of ['fig-raw-teal', 'fig-raw-pink', 'fig-gray-teal', 'fig-gray-pink', 'fig-color-teal', 'fig-color-pink', 'fig-composite']) {
     document.getElementById(id).style.display = '';
   }
+}
+
+// ── DPI detection ─────────────────────────────────────────────────────────────
+
+function parseDpiFromArrayBuffer(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const view  = new DataView(buffer);
+
+  // PNG: 89 50 4E 47 signature
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+    let offset = 8; // skip PNG signature
+    while (offset + 12 <= bytes.length) {
+      const chunkLen = view.getUint32(offset, false);
+      const type = String.fromCharCode(bytes[offset+4], bytes[offset+5], bytes[offset+6], bytes[offset+7]);
+      if (type === 'pHYs' && chunkLen >= 9) {
+        const ppuX = view.getUint32(offset + 8, false);
+        const unit = bytes[offset + 16];
+        if (unit === 1 && ppuX > 0) return Math.round(ppuX / 39.3701);
+        return 0;
+      }
+      if (type === 'IDAT' || type === 'IEND') break;
+      offset += 12 + chunkLen; // length(4) + type(4) + data(chunkLen) + CRC(4)
+    }
+    return 0;
+  }
+
+  // JPEG: FF D8 signature
+  if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
+    let offset = 2;
+    while (offset + 4 <= bytes.length) {
+      if (bytes[offset] !== 0xFF) break;
+      const marker = bytes[offset + 1];
+      const segLen = view.getUint16(offset + 2, false); // includes 2-byte length field
+      if (marker === 0xE0 && segLen >= 16) { // APP0 / JFIF
+        if (bytes[offset+4] === 0x4A && bytes[offset+5] === 0x46 &&
+            bytes[offset+6] === 0x49 && bytes[offset+7] === 0x46) {
+          const units = bytes[offset + 11];
+          const xDensity = view.getUint16(offset + 12, false);
+          if (units === 1 && xDensity > 0) return xDensity;
+          if (units === 2 && xDensity > 0) return Math.round(xDensity * 2.54);
+        }
+        return 0;
+      }
+      if (marker === 0xDA) break; // SOS — start of scan data
+      offset += 2 + segLen;
+    }
+    return 0;
+  }
+
+  return 0;
+}
+
+function updateEffectiveDpi() {
+  const det = Math.max(state.dpiDetected.teal, state.dpiDetected.pink);
+  const dpi = state.dpiOverride ? state.dpiManual : (det > 0 ? det : 300);
+  state.effectiveDpi = dpi;
+  const readout = document.getElementById('dpi-readout');
+  if (readout) {
+    const label = state.dpiOverride ? 'manual' : (det > 0 ? 'from file' : 'default');
+    readout.textContent = `${dpi} DPI (${label})`;
+  }
+  drawRulers();
+  runPrintWarnings();
+}
+
+// ── Physical size display ──────────────────────────────────────────────────────
+
+function drawRulers() {
+  const rulerH = document.getElementById('canvas-ruler-h');
+  const rulerV = document.getElementById('canvas-ruler-v');
+  if (!rulerH || !rulerV) return;
+
+  const composite = document.getElementById('canvas-composite');
+  const cw = composite.width;
+  const ch = composite.height;
+  if (cw === 0 || ch === 0) { rulerH.width = 0; rulerV.height = 0; return; }
+
+  const dpi = state.effectiveDpi;
+  const RULER_PX = 24; // thickness of ruler strip in canvas pixels
+
+  rulerH.width  = cw;
+  rulerH.height = RULER_PX;
+  rulerV.width  = RULER_PX;
+  rulerV.height = ch;
+
+  drawRulerCanvas(rulerH, cw, RULER_PX, dpi, 'horizontal');
+  drawRulerCanvas(rulerV, RULER_PX, ch, dpi, 'vertical');
+}
+
+function drawRulerCanvas(canvas, w, h, dpi, orientation) {
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#1e1e1e';
+  ctx.fillRect(0, 0, w, h);
+
+  const isH = orientation === 'horizontal';
+  const length = isH ? w : h;
+
+  // Draw ticks for inches (top/left half of ruler) and cm (bottom/right half)
+  const rulerMid = isH ? h / 2 : w / 2;
+
+  function drawTick(pos, tickLen, color, label, labelSide) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (isH) {
+      const y0 = labelSide === 'top' ? 0 : h - tickLen;
+      ctx.moveTo(pos + 0.5, y0);
+      ctx.lineTo(pos + 0.5, y0 + tickLen);
+    } else {
+      const x0 = labelSide === 'top' ? 0 : w - tickLen;
+      ctx.moveTo(x0, pos + 0.5);
+      ctx.lineTo(x0 + tickLen, pos + 0.5);
+    }
+    ctx.stroke();
+
+    if (label !== null) {
+      ctx.fillStyle = color;
+      ctx.font = '8px system-ui, sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.textAlign = isH ? 'left' : 'left';
+      const LABEL_OFFSET = 2;
+      if (isH) {
+        const y = labelSide === 'top' ? tickLen + LABEL_OFFSET : h - tickLen - 9;
+        ctx.fillText(label, pos + 2, y);
+      } else {
+        const x = labelSide === 'top' ? tickLen + LABEL_OFFSET : w - tickLen - 2;
+        ctx.fillText(label, x, pos + 1);
+      }
+    }
+  }
+
+  // Inches (top/left half of ruler strip)
+  const inPx = dpi;
+  const inSubdiv = [
+    { frac: 1,    tick: 10, label: true  },
+    { frac: 0.5,  tick: 7,  label: false },
+    { frac: 0.25, tick: 4,  label: false },
+  ];
+  for (const { frac, tick, label } of inSubdiv) {
+    const step = inPx * frac;
+    for (let pos = 0; pos < length; pos += step) {
+      const p = Math.round(pos);
+      const lbl = (label && pos > 0) ? String(Math.round(pos / inPx)) + '"' : null;
+      drawTick(p, tick, '#666', lbl, 'top');
+    }
+  }
+
+  // cm (bottom/right half of ruler strip)
+  const cmPx = dpi / 2.54;
+  const cmSubdiv = [
+    { frac: 1,   tick: 10, label: true  },
+    { frac: 0.5, tick: 6,  label: false },
+    { frac: 0.1, tick: 3,  label: false },
+  ];
+  for (const { frac, tick, label } of cmSubdiv) {
+    const step = cmPx * frac;
+    for (let pos = 0; pos < length; pos += step) {
+      const p = Math.round(pos);
+      const lbl = (label && pos > 0) ? String(Math.round(pos / cmPx)) : null;
+      drawTick(p, tick, '#555', lbl, 'bottom');
+    }
+  }
+}
+
+function applyActualSizeScaling() {
+  const layout    = document.getElementById('ruler-layout');
+  const composite = document.getElementById('canvas-composite');
+  const rulerH    = document.getElementById('canvas-ruler-h');
+  const rulerV    = document.getElementById('canvas-ruler-v');
+  if (!layout || !composite) return;
+
+  if (state.actualSizeMode && composite.width > 0 && composite.height > 0) {
+    const cssW = Math.round((composite.width  / state.effectiveDpi) * 96 * state.calibrationFactor);
+    const cssH = Math.round((composite.height / state.effectiveDpi) * 96 * state.calibrationFactor);
+    composite.style.width    = `${cssW}px`;
+    composite.style.height   = `${cssH}px`;
+    composite.style.maxWidth = 'none';
+    if (rulerH) { rulerH.style.width = `${cssW}px`; }
+    if (rulerV) { rulerV.style.height = `${cssH}px`; }
+    layout.style.gridTemplateColumns = `24px ${cssW}px`;
+    layout.style.gridTemplateRows    = `24px ${cssH}px`;
+    layout.classList.add('actual-size');
+  } else {
+    composite.style.width    = '';
+    composite.style.height   = '';
+    composite.style.maxWidth = '';
+    if (rulerH) { rulerH.style.width  = ''; }
+    if (rulerV) { rulerV.style.height = ''; }
+    layout.style.gridTemplateColumns = '';
+    layout.style.gridTemplateRows    = '';
+    layout.classList.remove('actual-size');
+  }
+}
+
+function updateCalibrationBar(factor) {
+  const bar = document.getElementById('calibration-bar');
+  const val = document.getElementById('calibration-val');
+  if (!bar || !val) return;
+  // 5cm reference: at default 96 CSS px/inch → 5 * 96/2.54 ≈ 189px
+  bar.style.width = `${Math.round(5 * 96 / 2.54 * factor)}px`;
+  val.textContent = `${Math.round(factor * 100)}%`;
+}
+
+function openCalibrationWidget() {
+  document.getElementById('calibration-widget').hidden = false;
+  const slider = document.getElementById('calibration-slider');
+  slider.value = state.calibrationFactor;
+  updateCalibrationBar(state.calibrationFactor);
+}
+
+function confirmCalibration() {
+  state.calibrationFactor = Number(document.getElementById('calibration-slider').value);
+  localStorage.setItem('risoCalibrationFactor', state.calibrationFactor);
+  document.getElementById('calibration-widget').hidden = true;
+  applyActualSizeScaling();
+}
+
+function closeCalibrationWidget() {
+  document.getElementById('calibration-widget').hidden = true;
+  applyActualSizeScaling();
+}
+
+// ── Print warnings ────────────────────────────────────────────────────────────
+
+function countSolidPixels(key, xMin, xMax, yMin, yMax) {
+  const ch = state[key];
+  const w = ch.width, h = ch.height;
+  if (w === 0 || h === 0) return 0;
+  xMin = Math.max(0, xMin); xMax = Math.min(w, xMax);
+  yMin = Math.max(0, yMin); yMax = Math.min(h, yMax);
+  let count = 0;
+  for (let y = yMin; y < yMax; y++) {
+    for (let x = xMin; x < xMax; x++) {
+      if (getDensity(ch.imageData[y * w + x], ch.inverted, ch.brightness, ch.contrast) <= 12) count++;
+    }
+  }
+  return count;
+}
+
+function runPrintWarnings() {
+  const list = document.getElementById('warnings-list');
+  if (!list) return;
+  const warnings = [];
+  const dpi = state.effectiveDpi;
+  const pxPerCm = dpi / 2.54;
+
+  // Size warning — use the uploaded channel dimensions (they match after resizeDefaultToMatch)
+  const uploaded = ['teal', 'pink'].find(k => !state[k].isDefault);
+  if (uploaded) {
+    const { width: w, height: h } = state[uploaded];
+    if (w / dpi > 8.5 || h / dpi > 14) {
+      const wIn = (w / dpi).toFixed(2), hIn = (h / dpi).toFixed(2);
+      warnings.push(`Image too large: ${wIn}″ × ${hIn}″ (max 8.5″ × 14″)`);
+    }
+  }
+
+  for (const key of ['teal', 'pink']) {
+    const ch = state[key];
+    const w = ch.width, h = ch.height;
+    if (w === 0 || h === 0) continue;
+    const label = key === 'teal' ? 'Light Teal' : 'Fluorescent Pink';
+
+    // Large solid area: > 3 cm²
+    const solidAll = countSolidPixels(key, 0, w, 0, h);
+    const solidAllCm2 = solidAll / (pxPerCm * pxPerCm);
+    if (solidAllCm2 > 3) {
+      warnings.push(`${label}: ${solidAllCm2.toFixed(1)} cm² of ≥95% solid coverage (limit: 3 cm²)`);
+    }
+
+    // Pickup area: top 1"
+    const pickupRows = Math.round(dpi);
+    const solidPickup = countSolidPixels(key, 0, w, 0, pickupRows);
+    if (solidPickup / (pxPerCm * pxPerCm) > 1) {
+      warnings.push(`${label}: heavy ink in pickup area (top 1″)`);
+    }
+
+    // Feed roller: center ±1" vertical strip
+    const cx = Math.floor(w / 2);
+    const solidRoller = countSolidPixels(key, cx - Math.round(dpi), cx + Math.round(dpi), 0, h);
+    if (solidRoller / (pxPerCm * pxPerCm) > 1) {
+      warnings.push(`${label}: heavy ink in feed roller zone (center ±1″)`);
+    }
+
+    // Margin bleed: any ink within 0.25" of edge (only warn if file exceeds 8"×13.5")
+    if (!ch.isDefault && (w / dpi > 8 || h / dpi > 13.5)) {
+      const margin = Math.round(dpi * 0.25);
+      if (checkMarginInk(key, margin)) {
+        warnings.push(`${label}: ink within 0.25″ margin`);
+      }
+    }
+  }
+
+  list.innerHTML = warnings.length === 0
+    ? '<li class="warning-item warning-ok">No warnings</li>'
+    : warnings.map(w => `<li class="warning-item">${w}</li>`).join('');
+}
+
+function checkMarginInk(key, marginPx) {
+  const ch = state[key];
+  const w = ch.width, h = ch.height;
+  if (w === 0 || h === 0 || marginPx <= 0) return false;
+  const zones = [
+    [0, w, 0, marginPx],
+    [0, w, h - marginPx, h],
+    [0, marginPx, 0, h],
+    [w - marginPx, w, 0, h],
+  ];
+  for (const [x0, x1, y0, y1] of zones) {
+    const xMin = Math.max(0, x0), xMax = Math.min(w, x1);
+    const yMin = Math.max(0, y0), yMax = Math.min(h, y1);
+    for (let y = yMin; y < yMax; y++) {
+      for (let x = xMin; x < xMax; x++) {
+        if (getDensity(ch.imageData[y * w + x], ch.inverted, ch.brightness, ch.contrast) < 250) return true;
+      }
+    }
+  }
+  return false;
 }
 
 // ── Upload handling ───────────────────────────────────────────────────────────
@@ -580,9 +909,16 @@ function handleUploadFile(file, key) {
 
   const reader = new FileReader();
   reader.onload = async (e) => {
+    const buffer = e.target.result;
+    state.dpiDetected[key] = parseDpiFromArrayBuffer(buffer);
+    updateEffectiveDpi();
+
+    const url = URL.createObjectURL(new Blob([buffer], { type: file.type }));
     const img = new Image();
-    img.src = e.target.result;
+    img.src = url;
     await img.decode();
+    URL.revokeObjectURL(url);
+
     const offscreen = document.createElement('canvas');
     offscreen.width  = img.naturalWidth;
     offscreen.height = img.naturalHeight;
@@ -592,7 +928,7 @@ function handleUploadFile(file, key) {
     processImage(rawData, key);
     updateThumbnail(offscreen, key);
   };
-  reader.readAsDataURL(file);
+  reader.readAsArrayBuffer(file);
 }
 
 function updateThumbnail(srcCanvas, key) {
@@ -693,7 +1029,7 @@ function bindEvents() {
   document.getElementById('btn-randomize').addEventListener('click', randomizeMisregistration);
 
   // Preview row collapse toggles
-  for (const rowId of ['row-raw', 'row-grayscale', 'row-colored', 'row-composite']) {
+  for (const rowId of ['row-raw', 'row-grayscale', 'row-colored', 'row-composite', 'row-warnings']) {
     const btn = document.querySelector(`#${rowId} .row-toggle`);
     if (btn) {
       btn.addEventListener('click', () => {
@@ -703,6 +1039,27 @@ function bindEvents() {
       });
     }
   }
+
+  // DPI controls
+  document.getElementById('dpi-override').addEventListener('change', (e) => {
+    state.dpiOverride = e.target.checked;
+    document.getElementById('dpi-manual').disabled = !e.target.checked;
+    updateEffectiveDpi();
+  });
+  document.getElementById('dpi-manual').addEventListener('change', (e) => {
+    state.dpiManual = Number(e.target.value);
+    updateEffectiveDpi();
+  });
+  document.getElementById('actual-size-mode').addEventListener('change', (e) => {
+    state.actualSizeMode = e.target.checked;
+    applyActualSizeScaling();
+  });
+  document.getElementById('btn-calibrate').addEventListener('click', openCalibrationWidget);
+  document.getElementById('btn-calibrate-confirm').addEventListener('click', confirmCalibration);
+  document.getElementById('btn-calibrate-cancel').addEventListener('click', closeCalibrationWidget);
+  document.getElementById('calibration-slider').addEventListener('input', (e) => {
+    updateCalibrationBar(Number(e.target.value));
+  });
 }
 
 init().catch(console.error);
